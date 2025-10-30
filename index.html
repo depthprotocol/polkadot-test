@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Depth Nexus - Journal Miner & Conscious Engagement</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js" type="text/javascript"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Using a deep, purposeful blue/purple to signify 'Depth' */
+            --depth-color: #7c3aed; /* violet-600 */
+            --mint-ready: #10b981; /* emerald-500 */
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0c0c1e; /* Deep dark blue */
+            color: #e5e7eb;
+        }
+        .miner-card {
+            background-color: #1a1b32; /* Slightly lighter deep blue */
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 4, 0, 0.2);
+            border-top: 4px solid var(--depth-color);
+        }
+        .button-primary {
+            transition: all 0.15s ease;
+        }
+        .button-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        }
+        .button-disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .cooldown-text {
+            min-height: 20px; /* Ensure space is reserved */
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+        /* Modal Styles */
+        .modal {
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 50;
+        }
+        .modal-content {
+            max-height: 90vh; /* Limit modal height */
+            background-color: #1a1b32;
+        }
+        .upgrade-purchased {
+            background-color: #3f6212; /* Darker green */
+            color: #d9f99d; /* Light green text */
+            opacity: 0.7;
+            cursor: default;
+        }
+    </style>
+    <!-- Firebase Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        // NOTE: We now use query and onSnapshot for the ledger
+        import { getFirestore, doc, setDoc, onSnapshot, collection, addDoc, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- HARDCODED FIREBASE CONFIGURATION (Using user's provided details) ---
+        const FIREBASE_CONFIG = {
+            apiKey: "AIzaSyDF25_VfPOpoMp7yj4qExsKC-36Aj7RV8Y",
+            authDomain: "dpthminer.firebaseapp.com",
+            projectId: "dpthminer",
+            storageBucket: "dpthminer.firebasestorage.app",
+            messagingSenderId: "876934885443",
+            appId: "1:876934885443:web:0b1620602ee0f6bb8ae4f6",
+            measurementId: "G-6ZNVVSQ0FH"
+        };
+        const appId = "dpthminer"; // Project ID used as the app ID for firestore path
+        // -----------------------------------------------------------------------
+
+        // Global Firebase instances and state
+        window.db = null;
+        window.auth = null;
+        window.userId = null;
+        window.isAuthReady = false;
+        
+        // NEW: Global variable to hold the Firestore listener's unsubscribe function for the Ledger
+        let ledgerUnsubscribe = null;
+        // NEW: Flag to ensure prompt is only set once on initial load
+        let isFirstLoad = true; 
+
+
+        setLogLevel('Debug');
+
+        window.setupFirebase = async function() {
+            if (!FIREBASE_CONFIG.projectId) {
+                console.error("Firebase configuration is incomplete.");
+                window.isAuthReady = true;
+                return;
+            }
+
+            try {
+                const app = initializeApp(FIREBASE_CONFIG);
+                window.db = getFirestore(app);
+                window.auth = getAuth(app);
+
+                // For a standalone app, we sign in anonymously since there is no custom token backend.
+                await signInAnonymously(window.auth);
+
+                onAuthStateChanged(window.auth, (user) => {
+                    if (user) {
+                        window.userId = user.uid;
+                        console.log("Authenticated with user ID:", window.userId);
+                    } else {
+                        window.userId = null; 
+                    }
+                    window.isAuthReady = true;
+                    // Only start loading game state once auth is confirmed
+                    window.loadGameState(); 
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization or authentication failed:", error);
+                window.isAuthReady = true;
+                window.loadGameState();
+            }
+        }
+
+        function getMinerDocRef() {
+            if (!window.db || !window.userId) return null;
+            // Uses the hardcoded 'appId' (which is 'dpthminer')
+            const path = `artifacts/${appId}/users/${window.userId}/depth_nexus_data`; 
+            return doc(window.db, path, 'miner_state');
+        }
+
+        window.getJournalCollectionRef = function() {
+            if (!window.db || !window.userId) return null;
+            // Uses the hardcoded 'appId'
+            const path = `artifacts/${appId}/users/${window.userId}/journal_entries`;
+            return collection(window.db, path);
+        }
+
+        window.saveGameState = async function() {
+            if (!window.isAuthReady || !window.db || !window.userId) return;
+
+            const state = {
+                dpthBalance: window.dpthBalance,
+                tapReward: window.tapReward,
+                lastTapTimestamp: window.lastTapTimestamp,
+                taskCompleted: window.taskCompleted,
+                upgrades: window.upgrades, 
+                // Only save the index, the currentPrompt and isPromptRefreshed are in-memory
+                initialPromptIndex: window.initialPromptIndex, 
+                lastSave: Date.now(),
+            };
+            try {
+                await setDoc(getMinerDocRef(), state, { merge: true });
+                console.log("Miner state saved.");
+            } catch (e) {
+                console.error("Error saving miner state: ", e);
+            }
+        }
+
+        window.saveJournalEntry = async function(text, wasMinted, reward, promptText) {
+            const collectionRef = window.getJournalCollectionRef();
+            if (!collectionRef) {
+                console.error("Cannot save journal: Firebase not ready.");
+                return;
+            }
+            try {
+                await addDoc(collectionRef, {
+                    timestamp: Date.now(),
+                    text: text,
+                    wasMinted: wasMinted,
+                    dpthReward: reward,
+                    prompt: promptText,
+                    userId: window.userId
+                });
+                console.log("Journal entry saved to Firestore (Collection).");
+            } catch (e) {
+                console.error("Error saving journal entry: ", e);
+            }
+        }
+        
+        // Load game state using onSnapshot for real-time updates
+        window.loadGameState = function() {
+            if (!window.isAuthReady || !window.db || !window.userId) {
+                console.log("Using default in-memory state. Firebase connection likely failed or is loading.");
+                document.getElementById('user-id').textContent = 'Loading...';
+                window.updateUI();
+                window.displayInitialPrompt(true);
+                return;
+            }
+
+            const docRef = getMinerDocRef();
+            onSnapshot(docRef, (docSnap) => { 
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    window.dpthBalance = data.dpthBalance || 0.0;
+                    window.tapReward = data.tapReward || 0.05;
+                    window.lastTapTimestamp = data.lastTapTimestamp || 0;
+                    window.taskCompleted = data.taskCompleted || { 1: false, 2: false };
+                    
+                    window.upgrades = data.upgrades || { 
+                        cepTier: 0, 
+                        clarityPurchased: false 
+                    }; 
+
+                    // --- FIX: Only set initial prompt on the very first load ---
+                    if (isFirstLoad) {
+                        window.initialPromptIndex = data.initialPromptIndex !== undefined ? data.initialPromptIndex : Math.floor(Math.random() * JOURNAL_PROMPTS.length);
+                        window.displayInitialPrompt(false); 
+                        isFirstLoad = false;
+                        console.log("Initial game state and prompt loaded.");
+                    }
+                    // -----------------------------------------------------------
+                    
+                } else {
+                    console.log("No data found, using defaults and saving initial state.");
+                    if (isFirstLoad) {
+                         window.initialPromptIndex = Math.floor(Math.random() * JOURNAL_PROMPTS.length);
+                         window.upgrades = { 
+                            cepTier: 0, 
+                            clarityPurchased: false 
+                        }; 
+                        window.displayInitialPrompt(false); 
+                        isFirstLoad = false;
+                    }
+                    window.saveGameState();
+                }
+                
+                window.updateUI(); // Always update UI on state change
+            }, (error) => {
+                console.error("Error listening to document:", error);
+                window.updateUI();
+                window.displayInitialPrompt(true);
+            });
+
+            document.getElementById('user-id').textContent = window.userId;
+        }
+
+    </script>
+
+</head>
+<body class="p-4 sm:p-8 min-h-screen">
+
+    <div id="game-container" class="max-w-4xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-white">
+                <span style="color:var(--depth-color);">$DEPTH</span> Ecosystem: Depth Nexus
+            </h1>
+            <p class="text-sm mt-2 text-gray-400">
+                Incentivizing Consciousness: **Journal to Mine** $DPTH once every 24 hours.
+            </p>
+            <p id="user-info" class="text-sm mt-2 text-gray-600">
+                User ID: <span id="user-id" class="text-xs text-gray-700">Loading...</span>
+            </p>
+        </header>
+
+        <!-- Wallet Connection Section -->
+        <div class="miner-card p-6 rounded-xl mb-8">
+            <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div class="flex-1">
+                    <h2 class="text-xl font-semibold text-white mb-2">🌐 Web3 Wallet</h2>
+                    <p id="wallet-status" class="text-sm text-gray-400">Connect your wallet to receive $DPTH on-chain</p>
+                    <p id="wallet-address" class="text-xs text-violet-400 mt-1 hidden"></p>
+                </div>
+                <div class="flex flex-col gap-2">
+                    <button id="connect-wallet-btn" 
+                        onclick="connectWallet()"
+                        class="bg-gradient-to-r from-purple-600 to-violet-600 text-white px-6 py-3 rounded-lg font-bold button-primary hover:from-purple-700 hover:to-violet-700 shadow-lg">
+                        Connect Wallet
+                    </button>
+                    <p id="chain-balance" class="text-xs text-center text-gray-500 hidden">
+                        On-chain: <span id="chain-balance-amount" class="text-violet-400 font-bold">0.0000</span> $DPTH
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Stats & Balance -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="miner-card p-4 rounded-xl">
+                <p class="text-sm font-medium text-gray-400">Your $DPTH Balance</p>
+                <p id="dnx-balance" class="text-3xl font-bold text-white mt-1">0.0000</p>
+            </div>
+            <div class="miner-card p-4 rounded-xl">
+                <p class="text-sm font-medium text-gray-400">Reward Per Mint (Base)</p>
+                <p id="tap-reward" class="text-3xl font-bold text-white mt-1">0.0500</p>
+            </div>
+            <div class="miner-card p-4 rounded-xl">
+                <p class="text-sm font-medium text-gray-400">Next $DPTH Mint in</p>
+                <p id="mint-remaining" class="text-xl sm:text-3xl font-bold text-green-400 mt-1">0h 0m 0s</p>
+            </div>
+        </div>
+
+        <!-- Ecosystem Synergy Tasks (MOVED TO TOP) -->
+        <div class="miner-card p-6 rounded-xl mb-8">
+            <h2 class="text-2xl font-semibold mb-4 text-white">Ecosystem Synergy Tasks (First Steps)</h2>
+            <p class="text-sm text-gray-400 mb-4">Complete these one-time onboarding tasks to **Acquire Initial Capital** and cement your connection to the core network.</p>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4" id="task-list">
+                <!-- Task 1: Wallet Sign-Up (Now Opens Modal) -->
+                <div class="bg-gray-800 p-4 rounded-lg flex justify-between items-center">
+                    <div>
+                        <p class="font-semibold text-white">Initiate: The Depth Operating System</p>
+                        <p class="text-xs text-gray-400">Secure your entry point to the conscious economy.</p>
+                    </div>
+                    <button id="task-1" onclick="openTaskModal(1)"
+                        class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-bold button-primary hover:bg-purple-700">
+                        Earn 0.1 $DPTH
+                    </button>
+                </div>
+                <!-- Task 2: KYC/Verification (Now Opens Modal) -->
+                <div class="bg-gray-800 p-4 rounded-lg flex justify-between items-center">
+                    <div>
+                        <p class="font-semibold text-white">Verify: The Digital Integrity Protocol</p>
+                        <p class="text-xs text-gray-400">Align your identity with the $DEPTH$ platform.</p>
+                    </div>
+                    <button id="task-2" onclick="openTaskModal(2)"
+                        class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-bold button-primary hover:bg-purple-700">
+                        Earn 0.2 $DPTH
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mining and Educational Claim Section -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <!-- 1. Journal Entry Area -->
+            <div class="miner-card p-6 rounded-xl lg:col-span-1">
+                <h2 class="text-2xl font-semibold mb-4 text-white">Daily Conscious Journal</h2>
+                <p class="text-sm text-gray-400 mb-4">
+                    Plant your daily seed of self-awareness. Submission requires a minimum of 
+                    <strong id="min-chars">50 characters</strong>.
+                </p>
+                
+                <div id="mining-status" class="cooldown-text text-center py-2 mb-4 text-yellow-300 rounded-lg">Checking Mint Eligibility...</div>
+                
+                <!-- Prompt and Refresh Button -->
+                <div class="flex justify-between items-center mb-2">
+                    <p class="text-white font-medium text-sm">Today's Prompt:</p>
+                    <button id="refresh-button" onclick="displayRandomPrompt(true)" class="text-xs text-violet-400 hover:text-violet-300 font-bold border border-violet-400 px-2 py-1 rounded-full transition duration-150">
+                        Refresh
+                    </button>
+                </div>
+                <p id="current-journal-prompt" class="text-violet-400 italic mb-4 text-base">Loading prompt...</p>
+                
+                <!-- NEW POSITION FOR FOCUS STATUS (Moved above the textarea) -->
+                <div id="focus-status-display" class="p-2 mb-3 rounded-lg text-center font-bold text-sm bg-gray-700">
+                    <!-- Content injected here by JS -->
+                </div>
+
+                <textarea id="journal-input" rows="5" placeholder="Write your reflective entry here..."
+                    class="w-full p-3 mb-4 rounded-lg bg-gray-800 border border-gray-700 text-white focus:ring-violet-500 focus:border-violet-500"></textarea>
+
+                <button id="mine-button"
+                    onclick="submitJournalEntry()"
+                    class="w-full px-6 py-4 rounded-xl bg-violet-600 text-white text-xl font-bold button-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-violet-700">
+                    Submit Journal Entry
+                </button>
+
+                <p id="claim-message" class="text-xs text-center mt-3 h-4 text-red-400"></p>
+            </div>
+
+            <!-- 2. Entry Reward Upgrades and Ledger Button -->
+            <div class="miner-card p-6 rounded-xl lg:col-span-1 flex flex-col">
+                <h2 class="text-2xl font-semibold mb-4 text-white">Cultivate Awareness</h2>
+                <p class="text-sm text-gray-400 mb-4">Invest $DPTH to permanently improve your mining protocol.</p>
+
+                <div id="upgrades" class="flex-grow space-y-3">
+                    
+                    <!-- Tiered Upgrade: Conscious Engagement Protocol (CEP) -->
+                    <div id="upgrade-cep" class="bg-gray-800 p-3 rounded-lg border-l-4 border-violet-500">
+                        <div>
+                            <p id="cep-title" class="text-lg font-semibold">Conscious Engagement Protocol (CEP) - Tier 0</p>
+                            <p id="cep-desc" class="text-xs text-gray-400">Unlock the first layer of enhanced rewards.</p>
+                        </div>
+                        <button id="cep-button" 
+                            onclick="buyCepUpgrade()"
+                            class="mt-3 w-full bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold button-primary hover:bg-green-700">
+                            Cost: 0.15 $DPTH (+0.01 $DPTH)
+                        </button>
+                    </div>
+
+                    <!-- Utility Upgrade: Systemic Clarity Upgrade -->
+                    <div id="upgrade-clarity" class="flex justify-between items-center bg-gray-800 p-3 rounded-lg">
+                        <div>
+                            <p class="text-lg font-semibold">Systemic Clarity Upgrade</p>
+                            <p class="text-xs text-gray-400">
+                                Reduces min required characters from 50 to 30.
+                            </p>
+                        </div>
+                        <button id="clarity-button" onclick="buyUtilityUpgrade(2.00, 'clarityPurchased')"
+                            class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold button-primary hover:bg-green-700">
+                            Cost: 2.0 $DPTH
+                        </button>
+                    </div>
+
+                </div>
+
+                <!-- Private Ledger Button -->
+                <div class="mt-6 border-t border-gray-700 pt-4">
+                    <button id="ledger-button"
+                        onclick="openLedgerModal()"
+                        class="w-full px-6 py-3 rounded-xl bg-gray-700 text-white font-bold button-primary hover:bg-gray-600">
+                        View Private Ledger (Growth Tracker)
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+
+    <!-- Private Ledger Modal -->
+    <div id="ledger-modal" class="modal fixed inset-0 hidden items-center justify-center p-4" onclick="closeLedgerModal(event)">
+        <div class="modal-content w-full max-w-2xl rounded-xl p-6 overflow-y-auto" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center border-b border-gray-700 pb-3 mb-4">
+                <h2 class="text-2xl font-bold text-white">Private Reflection Ledger</h2>
+                <button onclick="closeLedgerModal()" class="text-gray-400 hover:text-white text-3xl leading-none">&times;</button>
+            </div>
+            
+            <p id="ledger-loading" class="text-center text-violet-400 py-8">Loading your past entries...</p>
+            <div id="ledger-entries-list" class="space-y-4">
+                <!-- Journal entries will be inserted here -->
+            </div>
+            <p id="ledger-empty" class="text-center text-gray-500 py-8 hidden">Your Ledger is empty. Submit your first journal entry!</p>
+        </div>
+    </div>
+
+    <!-- Task Confirmation Modal (New) -->
+    <div id="task-modal" class="modal fixed inset-0 hidden items-center justify-center p-4" onclick="closeTaskModal(event)">
+        <div class="modal-content w-full max-w-lg rounded-xl p-6 overflow-y-auto" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center border-b border-gray-700 pb-3 mb-4">
+                <h2 id="task-modal-title" class="text-2xl font-bold text-white"></h2>
+                <button onclick="closeTaskModal()" class="text-gray-400 hover:text-white text-3xl leading-none">&times;</button>
+            </div>
+            
+            <div id="task-modal-content" class="text-gray-300 space-y-4">
+                <!-- Content will be injected here -->
+            </div>
+
+            <div class="mt-6 flex justify-end">
+                <button id="task-confirm-button"
+                    class="px-6 py-3 rounded-xl bg-violet-600 text-white font-bold button-primary hover:bg-violet-700 mr-3">
+                    Accept Commitment
+                </button>
+                <button onclick="closeTaskModal()"
+                    class="px-6 py-3 rounded-xl bg-gray-700 text-white font-bold button-primary hover:bg-gray-600">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <script type="module">
+        // Import Firebase Firestore functions needed for this module
+        import { query, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Game State (will be overridden by Firestore when ready)
+        window.dpthBalance = 0.0;
+        window.tapReward = 0.05; // Initial base reward per entry
+        window.lastTapTimestamp = 0; 
+        window.taskCompleted = { 1: false, 2: false };
+        window.upgrades = { 
+            cepTier: 0, 
+            clarityPurchased: false 
+        }; 
+        window.initialPromptIndex = 0; // Index of the prompt loaded at the start of the cycle
+        window.currentPrompt = ""; // Stores the prompt text currently displayed
+        window.isPromptRefreshed = false; // Tracks if the user hit the refresh button
+
+        // Constants
+        const MINT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+        const BASE_MIN_CHARACTERS = 50;
+        const CLARITY_MIN_CHARACTERS = 30;
+        const FOCUS_MULTIPLIER = 1.2;
+        const BASE_REWARD = 0.05;
+        
+        // Flag to ensure prompt is only set once on initial load (defined in module scope)
+        let isFirstLoad = true; 
+        // Global variable to hold the Firestore listener's unsubscribe function for the Ledger
+        let ledgerUnsubscribe = null;
+
+
+        // --- NEW TIERED UPGRADE CONFIGURATION ---
+        const CEP_UPGRADES = [
+            // Tier 0 (Initial state) - Placeholder
+            { name: "Initial Protocol", cost: 0, rewardIncrease: 0, description: "Base mining rate." },
+            // Tier 1
+            { name: "Focus Module (Tier 1)", cost: 0.15, rewardIncrease: 0.010, description: "Unlocks the **1.2x Focus Bonus** (if prompt is not refreshed)." },
+            // Tier 2 (Approx 3x previous cost)
+            { name: "Expansion Matrix (Tier 2)", cost: 0.50, rewardIncrease: 0.030, description: "Permanently boosts your base reward." },
+            // Tier 3 (Approx 3x previous cost)
+            { name: "Mastery Core (Tier 3)", cost: 1.50, rewardIncrease: 0.060, description: "Achieve maximum efficiency for $DPTH mining." }
+        ];
+
+        // --- Refreshable Prompts List ---
+        const JOURNAL_PROMPTS = [
+            "Identify a 'shadow' or disowned part of yourself that was triggered today. What message was it trying to deliver? (Mirror Protocol)",
+            "If you were the future version of yourself, what small, high-leverage action would you advise your current self to take right now? (Fractal Kernel)",
+            "Where did you feel a sense of genuine connection or depth today, and what made that interaction different? (L$D Framework)",
+            "Describe one moment where you successfully operated from your 'Observer Node' (awareness without judgment). What did you notice?",
+            "What current life challenge can you re-frame as a necessary chapter in your 'Hero’s Journey'? (Mythmaker Engine)"
+        ];
+
+        let uiUpdateInterval;
+        const saveInterval = 30000; // Save every 30 seconds
+
+        // --- Core Game Logic ---
+
+        // Function to set the initial prompt based on the stored index
+        window.displayInitialPrompt = function(isDefault) {
+             const promptElement = document.getElementById('current-journal-prompt');
+             if (promptElement) {
+                // If using default, choose a random one. Otherwise, use the loaded index.
+                let index = isDefault ? Math.floor(Math.random() * JOURNAL_PROMPTS.length) : window.initialPromptIndex;
+                
+                // Ensure index is valid
+                if (index < 0 || index >= JOURNAL_PROMPTS.length) {
+                    index = 0;
+                }
+                
+                window.currentPrompt = JOURNAL_PROMPTS[index];
+                promptElement.textContent = window.currentPrompt;
+                // isPromptRefreshed is only reset on submit/mint, not just by loading the initial prompt
+            }
+        }
+
+        // Function to select and display a random prompt (used when refresh button is clicked)
+        window.displayRandomPrompt = function(isRefreshClick = false) {
+            const promptElement = document.getElementById('current-journal-prompt');
+            if (promptElement) {
+                // Ensure the new prompt is different from the current one
+                let randomIndex;
+                let newPrompt;
+                do {
+                    randomIndex = Math.floor(Math.random() * JOURNAL_PROMPTS.length);
+                    newPrompt = JOURNAL_PROMPTS[randomIndex];
+                } while (newPrompt === window.currentPrompt);
+
+                window.currentPrompt = newPrompt;
+                promptElement.textContent = window.currentPrompt; // FIX: This correctly updates the text
+                
+                if (isRefreshClick) {
+                    window.isPromptRefreshed = true; // Mark as refreshed
+                    updateUI(); // Immediately update focus status to show 'Disabled'
+                }
+            }
+        }
+
+        function formatTimeRemaining(ms) {
+            if (ms <= 0) return "0h 0m 0s";
+            const hours = Math.floor(ms / (1000 * 60 * 60));
+            const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((ms % (1000 * 60)) / 1000);
+            return `${hours}h ${minutes}m ${seconds}s`;
+        }
+        
+        // Calculates the current base tap reward based on upgrades
+        function calculateCurrentBaseReward() {
+            let totalIncrease = 0;
+            for (let i = 1; i <= window.upgrades.cepTier; i++) {
+                // Sums up all the reward increases from unlocked tiers
+                totalIncrease += CEP_UPGRADES[i].rewardIncrease;
+            }
+            return BASE_REWARD + totalIncrease;
+        }
+
+        window.updateUI = function() {
+            // Update Base Reward before display
+            window.tapReward = calculateCurrentBaseReward();
+
+            document.getElementById('dnx-balance').textContent = window.dpthBalance.toFixed(4);
+            document.getElementById('tap-reward').textContent = window.tapReward.toFixed(4);
+            
+            const mineButton = document.getElementById('mine-button');
+            const miningStatus = document.getElementById('mining-status');
+            const mintRemainingDisplay = document.getElementById('mint-remaining');
+            const now = Date.now();
+            
+            const timeSinceLastMint = now - window.lastTapTimestamp;
+            const timeRemaining = Math.max(0, MINT_COOLDOWN_MS - timeSinceLastMint);
+            
+            const isMintReady = timeRemaining === 0;
+
+            // Determine required minimum characters based on Clarity Upgrade
+            const minChars = window.upgrades.clarityPurchased ? CLARITY_MIN_CHARACTERS : BASE_MIN_CHARACTERS;
+            document.getElementById('min-chars').textContent = `${minChars} characters`;
+            
+            // --- FOCUS STATUS DISPLAY LOGIC ---
+            const isFocusEligible = window.upgrades.cepTier >= 1 && !window.isPromptRefreshed;
+            const focusDisplayElement = document.getElementById('focus-status-display');
+
+            if (window.upgrades.cepTier >= 1) {
+                 if (window.isPromptRefreshed) {
+                    focusDisplayElement.innerHTML = "🚫 **Focus Bonus Disabled**: You refreshed the prompt. Mint will proceed at base rate.";
+                    focusDisplayElement.classList.remove('bg-green-700', 'text-green-200', 'bg-violet-800', 'text-violet-200');
+                    focusDisplayElement.classList.add('bg-yellow-800', 'text-yellow-200');
+                } else {
+                    focusDisplayElement.innerHTML = "🎯 **FOCUS BONUS ACTIVE**: Submit entry now for **1.2x $DPTH** reward!";
+                    focusDisplayElement.classList.remove('bg-yellow-800', 'text-yellow-200', 'bg-violet-800', 'text-violet-200');
+                    focusDisplayElement.classList.add('bg-green-700', 'text-green-200');
+                }
+            } else {
+                 focusDisplayElement.innerHTML = "💡 **TIP**: Purchase **Focus Module (Tier 1)** to unlock the **1.2x Focus Bonus**!";
+                 focusDisplayElement.classList.remove('bg-green-700', 'text-green-200', 'bg-yellow-800', 'text-yellow-200');
+                 focusDisplayElement.classList.add('bg-violet-800', 'text-violet-200');
+            }
+
+
+            if (isMintReady) {
+                // Calculate potential reward including focus multiplier
+                let totalReward = window.tapReward;
+                let bonusText = "";
+
+                if (isFocusEligible) {
+                    totalReward *= FOCUS_MULTIPLIER;
+                    bonusText = `(x${FOCUS_MULTIPLIER.toFixed(1)} Focus)`;
+                }
+                
+                miningStatus.textContent = "MINT READY: Next entry will earn $DPTH";
+                miningStatus.style.backgroundColor = 'var(--mint-ready)';
+                miningStatus.style.color = '#000';
+                mintRemainingDisplay.textContent = "NOW!";
+                mintRemainingDisplay.style.color = 'var(--mint-ready)';
+                mineButton.textContent = `Submit Journal Entry & MINT ${totalReward.toFixed(4)} $DPTH ${bonusText}`;
+            } else {
+                miningStatus.textContent = "Minting is on Cooldown. Entry will only be saved.";
+                miningStatus.style.backgroundColor = '#4b5563'; 
+                miningStatus.style.color = '#e5e7eb';
+                mintRemainingDisplay.textContent = formatTimeRemaining(timeRemaining);
+                mintRemainingDisplay.style.color = '#fcd34d'; 
+                mineButton.textContent = "Submit Journal Entry (No Mint)";
+            }
+
+            mineButton.disabled = false;
+            mineButton.classList.remove('button-disabled');
+
+            // --- Update UPGRADE UI ---
+            const nextTier = window.upgrades.cepTier + 1;
+            const cepDiv = document.getElementById('upgrade-cep');
+            const cepTitle = document.getElementById('cep-title');
+            const cepDesc = document.getElementById('cep-desc');
+            const cepButton = document.getElementById('cep-button');
+
+            if (nextTier <= 3) {
+                const upgrade = CEP_UPGRADES[nextTier];
+                const currentReward = calculateCurrentBaseReward();
+                const newReward = currentReward + upgrade.rewardIncrease;
+                
+                cepTitle.textContent = `${upgrade.name}`;
+                cepDesc.innerHTML = `${upgrade.description} Current Base: ${currentReward.toFixed(4)} $DPTH &rarr; **New Base: ${newReward.toFixed(4)} $DPTH**.`;
+                cepButton.textContent = `Cost: ${upgrade.cost.toFixed(2)} $DPTH`;
+                cepDiv.classList.remove('upgrade-purchased');
+                cepButton.disabled = false;
+
+                if (window.dpthBalance < upgrade.cost) {
+                    cepButton.disabled = true;
+                    cepButton.classList.add('button-disabled');
+                } else {
+                    cepButton.classList.remove('button-disabled');
+                }
+
+            } else {
+                cepTitle.textContent = `Conscious Engagement Protocol - MAXED`;
+                cepDesc.textContent = `All three tiers activated. Max base reward reached.`;
+                cepButton.textContent = `Purchased`;
+                cepButton.disabled = true;
+                cepDiv.classList.add('upgrade-purchased');
+            }
+
+
+            // Update Utility Upgrade UI
+            const clarityButton = document.getElementById('clarity-button');
+            const clarityDiv = document.getElementById('upgrade-clarity');
+
+            if (window.upgrades.clarityPurchased) {
+                clarityButton.textContent = 'Purchased';
+                clarityButton.disabled = true;
+                clarityDiv.classList.add('upgrade-purchased');
+            } else {
+                clarityDiv.classList.remove('upgrade-purchased');
+                clarityButton.disabled = window.dpthBalance < 2.00;
+                clarityButton.classList.toggle('button-disabled', window.dpthBalance < 2.00);
+            }
+            
+
+            // Update tasks UI
+            document.getElementById('task-1').disabled = window.taskCompleted[1];
+            document.getElementById('task-2').disabled = window.taskCompleted[2];
+            document.getElementById('task-1').classList.toggle('button-disabled', window.taskCompleted[1]);
+            document.getElementById('task-2').classList.toggle('button-disabled', window.taskCompleted[2]);
+        }
+
+        function startUIUpdateLoop() {
+            if (uiUpdateInterval) clearInterval(uiUpdateInterval);
+            // Run every second to update the countdown timer
+            uiUpdateInterval = setInterval(updateUI, 1000); 
+        }
+
+
+        // Primary Journal Submission function (conditional minting)
+        window.submitJournalEntry = async function() {
+            const now = Date.now();
+            const journalInput = document.getElementById('journal-input');
+            const journalText = journalInput.value.trim();
+            const mineButton = document.getElementById('mine-button');
+            
+            const timeSinceLastMint = now - window.lastTapTimestamp;
+            const isMintReady = timeSinceLastMint >= MINT_COOLDOWN_MS;
+            let didMint = false;
+            let reward = 0.0;
+            
+            // Determine required minimum characters based on Clarity Upgrade
+            const minChars = window.upgrades.clarityPurchased ? CLARITY_MIN_CHARACTERS : BASE_MIN_CHARACTERS;
+
+            if (journalText.length < minChars) {
+                document.getElementById('claim-message').textContent = `Entry is too short (${journalText.length} chars). Minimum ${minChars} characters required for reflection.`;
+                setTimeout(() => document.getElementById('claim-message').textContent = '', 3000);
+                return;
+            }
+
+            // Temporarily disable the button during submission
+            mineButton.disabled = true;
+            const originalText = mineButton.textContent;
+            mineButton.textContent = 'Securing Insight...';
+            document.getElementById('mining-status').textContent = "Processing and Securing Entry...";
+
+            await new Promise(resolve => setTimeout(resolve, 1500)); 
+
+            if (isMintReady) {
+                // Reward is based on the current calculated base tapReward
+                reward = window.tapReward;
+                
+                // Apply Micro-Focus Multiplier if applicable (only if Tier 1 or higher)
+                const isFocusEligible = window.upgrades.cepTier >= 1 && !window.isPromptRefreshed;
+                if (isFocusEligible) {
+                    reward *= FOCUS_MULTIPLIER;
+                }
+                
+                window.dpthBalance += reward;
+                window.lastTapTimestamp = now; // Reset the 24-hour clock
+                didMint = true;
+                
+                // Reset the prompt state for the new cycle
+                window.isPromptRefreshed = false;
+                window.initialPromptIndex = Math.floor(Math.random() * JOURNAL_PROMPTS.length); // Pick new initial prompt
+                displayInitialPrompt(false); 
+            }
+            
+            // Save the journal entry
+            await window.saveJournalEntry(journalText, didMint, reward, window.currentPrompt); 
+
+            // Clear the input and restore the button
+            journalInput.value = '';
+            mineButton.textContent = originalText;
+            mineButton.disabled = false;
+
+            if (didMint) {
+                document.getElementById('claim-message').textContent = `SUCCESS: Entry MINTED ${reward.toFixed(4)} $DPTH! Next mint is available in 24 hours.`;
+            } else {
+                document.getElementById('claim-message').textContent = `Journal entry secured. Minting paused. Continue reflecting!`;
+            }
+            setTimeout(() => document.getElementById('claim-message').textContent = '', 4000);
+
+            window.saveGameState(); // Save the new state
+            updateUI();
+        }
+
+        // Handles the purchase of the tiered CEP upgrade
+        window.buyCepUpgrade = function() {
+            const nextTier = window.upgrades.cepTier + 1;
+            if (nextTier > 3) {
+                document.getElementById('claim-message').textContent = "CEP is already at max tier!";
+                setTimeout(() => document.getElementById('claim-message').textContent = '', 2000);
+                return;
+            }
+
+            const upgrade = CEP_UPGRADES[nextTier];
+            
+            if (window.dpthBalance >= upgrade.cost) {
+                window.dpthBalance -= upgrade.cost;
+                window.upgrades.cepTier = nextTier; // Increment the tier
+
+                // Recalculate and update the reward now
+                window.tapReward = calculateCurrentBaseReward();
+
+                document.getElementById('claim-message').textContent = `${upgrade.name} activated! New base reward is ${window.tapReward.toFixed(4)} $DPTH.`;
+                setTimeout(() => document.getElementById('claim-message').textContent = '', 4000);
+                
+                updateUI();
+                window.saveGameState();
+            } else {
+                document.getElementById('claim-message').textContent = `Insufficient $DPTH. Need ${upgrade.cost.toFixed(2)} $DPTH to unlock the next tier.`;
+                setTimeout(() => document.getElementById('claim-message').textContent = '', 2000);
+            }
+        }
+        
+        // Handles the purchase of the utility (non-tiered) Clarity upgrade
+        window.buyUtilityUpgrade = function(cost, upgradeKey) {
+            if (window.upgrades[upgradeKey]) {
+                document.getElementById('claim-message').textContent = "Upgrade already purchased!";
+                setTimeout(() => document.getElementById('claim-message').textContent = '', 2000);
+                return;
+            }
+
+            if (window.dpthBalance >= cost) {
+                window.dpthBalance -= cost;
+                window.upgrades[upgradeKey] = true; // Mark as purchased
+
+                document.getElementById('claim-message').textContent = `Systemic Clarity activated! Min entry length reduced to ${CLARITY_MIN_CHARACTERS}.`;
+                setTimeout(() => document.getElementById('claim-message').textContent = '', 4000);
+                
+                updateUI();
+                window.saveGameState();
+            } else {
+                document.getElementById('claim-message').textContent = `Insufficient $DPTH balance! Need ${cost.toFixed(2)} $DPTH.`;
+                setTimeout(() => document.getElementById('claim-message').textContent = '', 2000);
+            }
+        }
+        
+        // Simulates completing a one-time referral/sign-up task
+        window.completeTask = function(reward, taskId) {
+            if (window.taskCompleted[taskId]) return;
+
+            window.dpthBalance += reward;
+            window.taskCompleted[taskId] = true;
+            
+            document.getElementById('claim-message').textContent = `Task ${taskId} completed! Deepened the Nexus, earned ${reward.toFixed(1)} $DPTH.`;
+            setTimeout(() => document.getElementById('claim-message').textContent = '', 3000);
+            
+            updateUI();
+            window.saveGameState();
+        }
+
+        // --- Modal Logic ---
+
+        const TASK_CONTENT = {
+            1: {
+                title: "Initiate: The Depth Operating System",
+                reward: 0.1,
+                confirmText: 'Accept OS & Earn',
+                html: `
+                    <p class="text-xl font-semibold text-violet-300 mb-4">
+                        You don’t download this OS; you choose it daily.
+                    </p>
+                    <p class="mb-2">Begin by asking yourself, in this moment:</p>
+                    <ul class="list-disc list-inside space-y-2 ml-4">
+                        <li>
+                            <span class="font-medium text-white">Do I accept that I can change how I see my life?</span> 
+                            <span class="text-green-400 font-bold">[Y / N]</span>
+                        </li>
+                        <li>
+                            <span class="font-medium text-white">Am I willing to gently question my own thoughts?</span> 
+                            <span class="text-green-400 font-bold">[Y / N]</span>
+                        </li>
+                        <li>
+                            <span class="font-medium text-white">Will I prioritize genuine connection over superficial scrolling?</span> 
+                            <span class="text-green-400 font-bold">[Y / N]</span>
+                        </li>
+                    </ul>
+                    <p class="mt-4 text-sm text-gray-400 border-t border-gray-700 pt-3">
+                        If you answered yes to even one—congratulations. You’re already running the new OS. Click the button below to cement this commitment and claim your $DPTH.
+                    </p>
+                `
+            },
+            2: {
+                title: "Verify: The Digital Integrity Protocol",
+                reward: 0.2,
+                confirmText: 'Accept Integrity & Earn',
+                html: `
+                    <p class="text-xl font-semibold text-violet-300 mb-4">
+                        Verification is Integrity. Close the Gap between Public and Private Self.
+                    </p>
+                    <p class="mb-2">To verify your Digital Identity (Integrity Protocol), answer these:</p>
+                    <ul class="list-disc list-inside space-y-2 ml-4">
+                        <li>
+                            <span class="font-medium text-white">Am I willing to integrate my "shadow"—the parts of myself I reject or hide (Mirror Protocol)?</span> 
+                            <span class="text-green-400 font-bold">[Y / N]</span>
+                        </li>
+                        <li>
+                            <span class="font-medium text-white">Do I actively choose my life's narrative (Mythmaker), or default to a passive script?</span> 
+                            <span class="text-green-400 font-bold">[Y / N]</span>
+                        </li>
+                        <li>
+                            <span class="font-medium text-white">Will I allow my choices to be guided by my highest values, not just immediate comfort (L$D Framework)?</span> 
+                            <span class="text-green-400 font-bold">[Y / N]</span>
+                        </li>
+                    </ul>
+                    <p class="mt-4 text-sm text-gray-400 border-t border-gray-700 pt-3">
+                        Answering yes verifies your commitment to wholeness. Click the button below to lock in this deeper commitment and claim your $DPTH.
+                    </p>
+                `
+            }
+        };
+
+
+        window.openTaskModal = function(taskId) {
+            const modal = document.getElementById('task-modal');
+            const title = document.getElementById('task-modal-title');
+            const content = document.getElementById('task-modal-content');
+            const confirmButton = document.getElementById('task-confirm-button');
+            const taskData = TASK_CONTENT[taskId];
+
+            if (!taskData || window.taskCompleted[taskId]) return;
+            
+            title.textContent = taskData.title;
+            content.innerHTML = taskData.html;
+            
+            confirmButton.textContent = `${taskData.confirmText} ${taskData.reward.toFixed(1)} $DPTH`;
+            confirmButton.onclick = () => {
+                completeTask(taskData.reward, taskId);
+                closeTaskModal();
+            };
+
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        window.closeTaskModal = function(event) {
+            if (!event || event.currentTarget.id === 'task-modal') {
+                document.getElementById('task-modal').classList.add('hidden');
+                document.getElementById('task-modal').classList.remove('flex');
+            }
+        }
+        
+        // Helper function to render the ledger entries
+        function renderLedgerEntries(entries) {
+            const listContainer = document.getElementById('ledger-entries-list');
+            listContainer.innerHTML = '';
+            const SNIPPET_LENGTH = 300;
+
+            entries.forEach(entry => {
+                const date = new Date(entry.timestamp).toLocaleString();
+                const textSnippet = entry.text.substring(0, SNIPPET_LENGTH) + (entry.text.length > SNIPPET_LENGTH ? '...' : '');
+                
+                let mintStatus;
+                if (entry.wasMinted) {
+                    mintStatus = `<span class="text-green-400 font-semibold">Minted ${entry.dpthReward.toFixed(4)} $DPTH</span>`;
+                } else {
+                    mintStatus = `<span class="text-yellow-400 font-semibold">Saved (No Mint)</span>`;
+                }
+
+                const promptUsed = entry.prompt ? `<p class="text-xs text-gray-500 mt-1">Prompt: "${entry.prompt}"</p>` : '';
+
+                const entryHtml = `
+                    <div class="bg-gray-800 p-4 rounded-lg border-l-4 ${entry.wasMinted ? 'border-green-500' : 'border-yellow-500'}">
+                        <div class="flex justify-between items-center mb-2">
+                            <p class="text-sm text-gray-400">${date}</p>
+                            ${mintStatus}
+                        </div>
+                        <p class="text-white text-md italic whitespace-pre-wrap">${textSnippet}</p>
+                        ${promptUsed}
+                    </div>
+                `;
+                listContainer.insertAdjacentHTML('beforeend', entryHtml);
+            });
+        }
+
+
+        // UPDATED: Uses onSnapshot for reliable, real-time loading
+        window.openLedgerModal = function() {
+            const modal = document.getElementById('ledger-modal');
+            const loading = document.getElementById('ledger-loading');
+            const empty = document.getElementById('ledger-empty');
+            const listContainer = document.getElementById('ledger-entries-list');
+
+            // 1. Show modal and loading state
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            loading.classList.remove('hidden');
+            empty.classList.add('hidden');
+            listContainer.innerHTML = ''; 
+
+            // 2. Check for Firebase readiness
+            const collectionRef = window.getJournalCollectionRef();
+            if (!collectionRef) {
+                loading.textContent = 'Connection not ready. Please wait a moment for the user session to initialize.';
+                console.error("Ledger cannot open: Firebase collection reference is null.");
+                return;
+            }
+
+            // 3. Clear existing listener if any
+            if (ledgerUnsubscribe) ledgerUnsubscribe();
+            
+            console.log("Attempting to establish onSnapshot listener for Ledger...");
+
+            // 4. Set up the real-time listener (onSnapshot)
+            const q = query(collectionRef); 
+
+            ledgerUnsubscribe = onSnapshot(q, (querySnapshot) => {
+                console.log(`Ledger Snapshot received. Document count: ${querySnapshot.docs.length}`);
+                
+                const entries = [];
+                querySnapshot.forEach((doc) => {
+                    entries.push({ id: doc.id, ...doc.data() });
+                });
+                
+                // Client-side sort by timestamp descending (newest first)
+                entries.sort((a, b) => b.timestamp - a.timestamp);
+
+                // 5. Render the fetched data and update UI state
+                renderLedgerEntries(entries); 
+                
+                loading.classList.add('hidden'); // Hide loading message
+                
+                if (entries.length === 0) {
+                    empty.classList.remove('hidden');
+                } else {
+                    empty.classList.add('hidden');
+                }
+
+            }, (error) => {
+                // Handle errors during the snapshot
+                console.error("FATAL LEDGER SNAPSHOT ERROR:", error);
+                loading.textContent = `FATAL ERROR loading entries: ${error.code}. Check console for details.`;
+                listContainer.innerHTML = '';
+            });
+        }
+
+        // UPDATED: Clears the listener on close
+        window.closeLedgerModal = function(event) {
+            // Unsubscribe from the listener to prevent memory leaks
+            if (ledgerUnsubscribe) {
+                ledgerUnsubscribe(); 
+                ledgerUnsubscribe = null;
+                console.log("Ledger snapshot listener unsubscribed.");
+            }
+            
+            // Close the modal itself
+            if (!event || event.currentTarget.id === 'ledger-modal') {
+                document.getElementById('ledger-modal').classList.add('hidden');
+                document.getElementById('ledger-modal').classList.remove('flex');
+            }
+        }
+
+
+        // --- Initialization ---
+
+        window.onload = function() {
+            window.setupFirebase();
+            startUIUpdateLoop();
+            setInterval(window.saveGameState, saveInterval);
+        };
+
+
+        // ==========================================
+        // WEB3 WALLET CONNECTION & CONTRACT INTERACTION
+        // ==========================================
+
+        // Contract configuration - UPDATE THESE AFTER DEPLOYMENT
+        const ASTAR_TESTNET_CONFIG = {
+            chainId: '0x51', // 81 in hex
+            chainName: 'Shibuya (Astar Testnet)',
+            nativeCurrency: {
+                name: 'Shibuya',
+                symbol: 'SBY',
+                decimals: 18
+            },
+            rpcUrls: ['https://evm.shibuya.astar.network'],
+            blockExplorerUrls: ['https://shibuya.blockscout.com/']
+        };
+
+        // TODO: Update this after deploying contract
+        const DPTH_CONTRACT_ADDRESS = '0x0000000000000000000000000000000000000000'; // REPLACE WITH YOUR DEPLOYED CONTRACT
+        
+        // Contract ABI - only the functions we need
+        const DPTH_ABI = [
+            "function balanceOf(address account) view returns (uint256)",
+            "function symbol() view returns (string)",
+            "function decimals() view returns (uint8)"
+        ];
+
+        // Global Web3 state
+        window.web3Provider = null;
+        window.web3Signer = null;
+        window.dpthContract = null;
+        window.connectedAddress = null;
+
+        /**
+         * Connect to user's wallet (MetaMask/SubWallet)
+         */
+        window.connectWallet = async function() {
+            const connectBtn = document.getElementById('connect-wallet-btn');
+            const walletStatus = document.getElementById('wallet-status');
+            const walletAddress = document.getElementById('wallet-address');
+            
+            try {
+                // Check if wallet is installed
+                if (typeof window.ethereum === 'undefined') {
+                    walletStatus.textContent = '❌ Please install MetaMask or SubWallet';
+                    walletStatus.className = 'text-sm text-red-400';
+                    window.open('https://metamask.io/download/', '_blank');
+                    return;
+                }
+
+                connectBtn.textContent = 'Connecting...';
+                connectBtn.disabled = true;
+
+                // Request account access
+                const accounts = await window.ethereum.request({ 
+                    method: 'eth_requestAccounts' 
+                });
+                
+                if (accounts.length === 0) {
+                    throw new Error('No accounts found');
+                }
+
+                window.connectedAddress = accounts[0];
+
+                // Check if on correct network
+                const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+                
+                if (chainId !== ASTAR_TESTNET_CONFIG.chainId) {
+                    // Try to switch to Astar Shibuya
+                    try {
+                        await window.ethereum.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: ASTAR_TESTNET_CONFIG.chainId }],
+                        });
+                    } catch (switchError) {
+                        // Network not added, try to add it
+                        if (switchError.code === 4902) {
+                            await window.ethereum.request({
+                                method: 'wallet_addEthereumChain',
+                                params: [ASTAR_TESTNET_CONFIG],
+                            });
+                        } else {
+                            throw switchError;
+                        }
+                    }
+                }
+
+                // Initialize ethers provider and signer
+                window.web3Provider = new ethers.providers.Web3Provider(window.ethereum);
+                window.web3Signer = window.web3Provider.getSigner();
+
+                // Initialize contract (if address is set)
+                if (DPTH_CONTRACT_ADDRESS !== '0x0000000000000000000000000000000000000000') {
+                    window.dpthContract = new ethers.Contract(
+                        DPTH_CONTRACT_ADDRESS,
+                        DPTH_ABI,
+                        window.web3Signer
+                    );
+                    
+                    // Load on-chain balance
+                    await loadChainBalance();
+                }
+
+                // Update UI
+                const shortAddress = `${window.connectedAddress.slice(0, 6)}...${window.connectedAddress.slice(-4)}`;
+                walletAddress.textContent = `Connected: ${shortAddress}`;
+                walletAddress.classList.remove('hidden');
+                walletStatus.textContent = '✅ Wallet connected to Shibuya Testnet';
+                walletStatus.className = 'text-sm text-green-400';
+                connectBtn.textContent = 'Connected ✓';
+                connectBtn.className = 'bg-green-600 text-white px-6 py-3 rounded-lg font-bold shadow-lg cursor-default';
+
+                console.log('Wallet connected:', window.connectedAddress);
+
+                // Listen for account changes
+                window.ethereum.on('accountsChanged', handleAccountsChanged);
+                window.ethereum.on('chainChanged', handleChainChanged);
+
+            } catch (error) {
+                console.error('Error connecting wallet:', error);
+                walletStatus.textContent = `❌ ${error.message || 'Failed to connect wallet'}`;
+                walletStatus.className = 'text-sm text-red-400';
+                connectBtn.textContent = 'Connect Wallet';
+                connectBtn.disabled = false;
+            }
+        };
+
+        /**
+         * Load on-chain $DPTH balance
+         */
+        async function loadChainBalance() {
+            if (!window.dpthContract || !window.connectedAddress) return;
+
+            try {
+                const balance = await window.dpthContract.balanceOf(window.connectedAddress);
+                const formattedBalance = ethers.utils.formatEther(balance);
+                
+                document.getElementById('chain-balance-amount').textContent = parseFloat(formattedBalance).toFixed(4);
+                document.getElementById('chain-balance').classList.remove('hidden');
+                
+                console.log('On-chain DPTH balance:', formattedBalance);
+            } catch (error) {
+                console.error('Error loading chain balance:', error);
+            }
+        }
+
+        /**
+         * Handle account changes
+         */
+        function handleAccountsChanged(accounts) {
+            if (accounts.length === 0) {
+                // User disconnected wallet
+                disconnectWallet();
+            } else if (accounts[0] !== window.connectedAddress) {
+                // User switched account
+                window.location.reload();
+            }
+        }
+
+        /**
+         * Handle chain changes
+         */
+        function handleChainChanged(chainId) {
+            // Reload page when chain changes
+            window.location.reload();
+        }
+
+        /**
+         * Disconnect wallet
+         */
+        function disconnectWallet() {
+            window.connectedAddress = null;
+            window.web3Provider = null;
+            window.web3Signer = null;
+            window.dpthContract = null;
+
+            const connectBtn = document.getElementById('connect-wallet-btn');
+            const walletStatus = document.getElementById('wallet-status');
+            const walletAddress = document.getElementById('wallet-address');
+            const chainBalance = document.getElementById('chain-balance');
+
+            walletStatus.textContent = 'Connect your wallet to receive $DPTH on-chain';
+            walletStatus.className = 'text-sm text-gray-400';
+            walletAddress.classList.add('hidden');
+            chainBalance.classList.add('hidden');
+            connectBtn.textContent = 'Connect Wallet';
+            connectBtn.className = 'bg-gradient-to-r from-purple-600 to-violet-600 text-white px-6 py-3 rounded-lg font-bold button-primary hover:from-purple-700 hover:to-violet-700 shadow-lg';
+            connectBtn.disabled = false;
+        }
+
+        /**
+         * Auto-refresh chain balance every 10 seconds if connected
+         */
+        setInterval(() => {
+            if (window.connectedAddress && window.dpthContract) {
+                loadChainBalance();
+            }
+        }, 10000);
+
+        // Try to reconnect wallet on page load if previously connected
+        window.addEventListener('load', async () => {
+            if (typeof window.ethereum !== 'undefined') {
+                const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                if (accounts.length > 0) {
+                    // Auto-reconnect
+                    setTimeout(() => {
+                        connectWallet();
+                    }, 1000);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
