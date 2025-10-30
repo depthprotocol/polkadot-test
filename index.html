@@ -87,15 +87,6 @@
         // NEW: Flag to ensure prompt is only set once on initial load
         let isFirstLoad = true; 
 
-        // --- Refreshable Prompts List ---
-        const JOURNAL_PROMPTS = [
-            "Identify a 'shadow' or disowned part of yourself that was triggered today. What message was it trying to deliver? (Mirror Protocol)",
-            "If you were the future version of yourself, what small, high-leverage action would you advise your current self to take right now? (Fractal Kernel)",
-            "Where did you feel a sense of genuine connection or depth today, and what made that interaction different? (L$D Framework)",
-            "Describe one moment where you successfully operated from your 'Observer Node' (awareness without judgment). What did you notice?",
-            "What current life challenge can you re-frame as a necessary chapter in your 'Hero's Journey'? (Mythmaker Engine)"
-        ];
-
 
         setLogLevel('Debug');
 
@@ -215,7 +206,7 @@
 
                     // --- FIX: Only set initial prompt on the very first load ---
                     if (isFirstLoad) {
-                        window.initialPromptIndex = data.initialPromptIndex !== undefined ? data.initialPromptIndex : Math.floor(Math.random() * JOURNAL_PROMPTS.length);
+                        window.initialPromptIndex = data.initialPromptIndex !== undefined ? data.initialPromptIndex : Math.floor(Math.random() * window.JOURNAL_PROMPTS.length);
                         window.displayInitialPrompt(false); 
                         isFirstLoad = false;
                         console.log("Initial game state and prompt loaded.");
@@ -225,7 +216,7 @@
                 } else {
                     console.log("No data found, using defaults and saving initial state.");
                     if (isFirstLoad) {
-                         window.initialPromptIndex = Math.floor(Math.random() * JOURNAL_PROMPTS.length);
+                         window.initialPromptIndex = Math.floor(Math.random() * window.JOURNAL_PROMPTS.length);
                          window.upgrades = { 
                             cepTier: 0, 
                             clarityPurchased: false 
@@ -504,6 +495,16 @@
         ];
 
 
+
+        // --- Refreshable Prompts List ---
+        window.JOURNAL_PROMPTS = [
+            "Identify a 'shadow' or disowned part of yourself that was triggered today. What message was it trying to deliver? (Mirror Protocol)",
+            "If you were the future version of yourself, what small, high-leverage action would you advise your current self to take right now? (Fractal Kernel)",
+            "Where did you feel a sense of genuine connection or depth today, and what made that interaction different? (L$D Framework)",
+            "Describe one moment where you successfully operated from your 'Observer Node' (awareness without judgment). What did you notice?",
+            "What current life challenge can you re-frame as a necessary chapter in your 'Hero's Journey'? (Mythmaker Engine)"
+        ];
+
         let uiUpdateInterval;
         const saveInterval = 30000; // Save every 30 seconds
 
@@ -514,14 +515,14 @@
              const promptElement = document.getElementById('current-journal-prompt');
              if (promptElement) {
                 // If using default, choose a random one. Otherwise, use the loaded index.
-                let index = isDefault ? Math.floor(Math.random() * JOURNAL_PROMPTS.length) : window.initialPromptIndex;
+                let index = isDefault ? Math.floor(Math.random() * window.JOURNAL_PROMPTS.length) : window.initialPromptIndex;
                 
                 // Ensure index is valid
-                if (index < 0 || index >= JOURNAL_PROMPTS.length) {
+                if (index < 0 || index >= window.JOURNAL_PROMPTS.length) {
                     index = 0;
                 }
                 
-                window.currentPrompt = JOURNAL_PROMPTS[index];
+                window.currentPrompt = window.JOURNAL_PROMPTS[index];
                 promptElement.textContent = window.currentPrompt;
                 // isPromptRefreshed is only reset on submit/mint, not just by loading the initial prompt
             }
@@ -535,8 +536,8 @@
                 let randomIndex;
                 let newPrompt;
                 do {
-                    randomIndex = Math.floor(Math.random() * JOURNAL_PROMPTS.length);
-                    newPrompt = JOURNAL_PROMPTS[randomIndex];
+                    randomIndex = Math.floor(Math.random() * window.JOURNAL_PROMPTS.length);
+                    newPrompt = window.JOURNAL_PROMPTS[randomIndex];
                 } while (newPrompt === window.currentPrompt);
 
                 window.currentPrompt = newPrompt;
@@ -745,7 +746,7 @@
                 
                 // Reset the prompt state for the new cycle
                 window.isPromptRefreshed = false;
-                window.initialPromptIndex = Math.floor(Math.random() * JOURNAL_PROMPTS.length); // Pick new initial prompt
+                window.initialPromptIndex = Math.floor(Math.random() * window.JOURNAL_PROMPTS.length); // Pick new initial prompt
                 displayInitialPrompt(false); 
             }
             
