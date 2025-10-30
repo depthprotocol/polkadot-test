@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Depth Nexus - Journal Miner & Conscious Engagement</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js" type="text/javascript"></script>
+    <script src="https://unpkg.com/ethers@5.7.2/dist/ethers.umd.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -86,6 +86,15 @@
         let ledgerUnsubscribe = null;
         // NEW: Flag to ensure prompt is only set once on initial load
         let isFirstLoad = true; 
+
+        // --- Refreshable Prompts List ---
+        const JOURNAL_PROMPTS = [
+            "Identify a 'shadow' or disowned part of yourself that was triggered today. What message was it trying to deliver? (Mirror Protocol)",
+            "If you were the future version of yourself, what small, high-leverage action would you advise your current self to take right now? (Fractal Kernel)",
+            "Where did you feel a sense of genuine connection or depth today, and what made that interaction different? (L$D Framework)",
+            "Describe one moment where you successfully operated from your 'Observer Node' (awareness without judgment). What did you notice?",
+            "What current life challenge can you re-frame as a necessary chapter in your 'Hero's Journey'? (Mythmaker Engine)"
+        ];
 
 
         setLogLevel('Debug');
@@ -494,14 +503,6 @@
             { name: "Mastery Core (Tier 3)", cost: 1.50, rewardIncrease: 0.060, description: "Achieve maximum efficiency for $DPTH mining." }
         ];
 
-        // --- Refreshable Prompts List ---
-        const JOURNAL_PROMPTS = [
-            "Identify a 'shadow' or disowned part of yourself that was triggered today. What message was it trying to deliver? (Mirror Protocol)",
-            "If you were the future version of yourself, what small, high-leverage action would you advise your current self to take right now? (Fractal Kernel)",
-            "Where did you feel a sense of genuine connection or depth today, and what made that interaction different? (L$D Framework)",
-            "Describe one moment where you successfully operated from your 'Observer Node' (awareness without judgment). What did you notice?",
-            "What current life challenge can you re-frame as a necessary chapter in your 'Hero’s Journey'? (Mythmaker Engine)"
-        ];
 
         let uiUpdateInterval;
         const saveInterval = 30000; // Save every 30 seconds
@@ -1086,14 +1087,29 @@
             const walletAddress = document.getElementById('wallet-address');
             
             try {
+                console.log('Connect Wallet clicked');
+                console.log('window.ethereum exists?', typeof window.ethereum !== 'undefined');
+                console.log('window.ethereum value:', window.ethereum);
+                
                 // Check if wallet is installed
                 if (typeof window.ethereum === 'undefined') {
-                    walletStatus.textContent = '❌ Please install MetaMask or SubWallet';
+                    console.error('No wallet detected');
+                    walletStatus.textContent = '❌ No wallet detected. Please install MetaMask or refresh the page.';
                     walletStatus.className = 'text-sm text-red-400';
-                    window.open('https://metamask.io/download/', '_blank');
+                    
+                    // Wait a moment, sometimes MetaMask loads late
+                    setTimeout(() => {
+                        if (typeof window.ethereum !== 'undefined') {
+                            walletStatus.textContent = 'Wallet detected! Click Connect Wallet again.';
+                            walletStatus.className = 'text-sm text-green-400';
+                        } else {
+                            window.open('https://metamask.io/download/', '_blank');
+                        }
+                    }, 1000);
                     return;
                 }
 
+                console.log('Wallet detected, requesting accounts...');
                 connectBtn.textContent = 'Connecting...';
                 connectBtn.disabled = true;
 
